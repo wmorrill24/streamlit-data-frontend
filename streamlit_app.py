@@ -16,92 +16,175 @@ st.set_page_config(
 
 def show_upload_page(api_base_url):
     """Renders the upload page UI and logic."""
-    st.header("Upload a New File")
-    st.markdown("Select a data file and fill in the metadata form to upload.")
+    st.header("Upload Data")
 
-    # Step 1: File Uploader
-    data_file = st.file_uploader(
-        "Select the data file you want to upload.", type=None, key="data_file_uploader"
-    )
+    # Create tabs for single file vs folder upload
+    tab1, tab2 = st.tabs(["Upload Single File", "Upload Folder (as .zip)"])
 
-    # Step 2: Metadata Form (appears only after a file is selected)
-    if data_file is not None:
-        st.markdown("---")
-        st.subheader(f"Metadata for: `{data_file.name}`")
+    # --- Single File Upload Tab ---
+    with tab1:
+        st.markdown(
+            "Select a single data file and fill in the metadata form to upload."
+        )
+        data_file = st.file_uploader(
+            "Select Data File", type=None, key="single_file_uploader"
+        )
 
-        with st.form(key="metadata_form"):
-            # Form fields for metadata
-            research_project_id = st.text_input(
-                "Research Project ID*", placeholder="e.g., BBBO"
-            )
-            author = st.text_input("Author*", placeholder="e.g., wkm2109")
-            experiment_type = st.text_input(
-                "Experiment Type", placeholder="e.g., Data Calibration"
-            )
-            date_conducted = st.date_input("Date Conducted")
-            custom_tags = st.text_input(
-                "Custom Tags (comma-separated)",
-                placeholder="e.g., tag1, important_data",
-            )
+        if data_file is not None:
+            with st.form(key="single_file_metadata_form"):
+                st.subheader(f"Metadata for: `{data_file.name}`")
+                research_project_id = st.text_input(
+                    "Research Project ID*",
+                    placeholder="e.g., BBBO",
+                    key="single_proj",
+                )
+                author = st.text_input(
+                    "Author*", placeholder="e.g., wkm2109", key="single_author"
+                )
+                experiment_type = st.text_input(
+                    "Experiment Type",
+                    placeholder="e.g., Frequency_Sweep",
+                    key="single_exp",
+                )
+                date_conducted = st.date_input("Date Conducted", key="single_date")
+                custom_tags = st.text_input(
+                    "Custom Tags (comma-separated)",
+                    placeholder="e.g., tag1, important_data",
+                    key="single_tags",
+                )
+                submit_button = st.form_submit_button(label="Upload File and Metadata")
 
-            submit_button = st.form_submit_button(label="Upload File and Metadata")
+                if submit_button:
+                    if not research_project_id or not author:
+                        st.error("Please fill in all required fields (*).")
+                        return
 
-            if submit_button:
-                # Basic validation
-                if not research_project_id or not author:
-                    st.error("Please fill in all required fields (*).")
-                    return
+                    metadata_dict = {
+                        "research_project_id": research_project_id,
+                        "author": author,
+                        "experiment_type": experiment_type,
+                        "date_conducted": date_conducted.isoformat()
+                        if date_conducted
+                        else None,
+                        "custom_tags": custom_tags,
+                    }
+                    yaml_string = yaml.dump(metadata_dict, sort_keys=False)
+                    metadata_file_obj = StringIO(yaml_string)
+                    metadata_file_obj.name = "metadata.yaml"
 
-                # Create metadata dictionary from form data
-                metadata_dict = {
-                    "research_project_id": research_project_id,
-                    "author": author,
-                    "experiment_type": experiment_type,
-                    "date_conducted": date_conducted.isoformat()
-                    if date_conducted
-                    else None,
-                    "custom_tags": custom_tags,
-                }
+                    files = {
+                        "data_file": (data_file.name, data_file, data_file.type),
+                        "metadata_file": (
+                            metadata_file_obj.name,
+                            metadata_file_obj.getvalue(),
+                            "text/yaml",
+                        ),
+                    }
 
-                # Convert dictionary to a YAML string
-                yaml_string = yaml.dump(metadata_dict, sort_keys=False)
-
-                # Create an in-memory text file for the metadata
-                metadata_file_obj = StringIO(yaml_string)
-                metadata_file_obj.name = "metadata.yaml"  # Give it a name
-
-                # Prepare files for the multipart/form-data request.
-                # By passing the file object (data_file) directly instead of using .getvalue(),
-                # the requests library will stream the upload, which is memory-efficient for large files.
-                files = {
-                    "data_file": (data_file.name, data_file, data_file.type),
-                    "metadata_file": (
-                        metadata_file_obj.name,
-                        metadata_file_obj.getvalue(),
-                        "text/yaml",
-                    ),
-                }
-
-                try:
-                    with st.spinner(f"Uploading `{data_file.name}`..."):
-                        response = requests.post(
-                            f"{api_base_url}/uploadfile/",
-                            files=files,
-                            timeout=3600,  # Set a longer timeout for very large uploads (e.g., 1 hour)
-                        )
-
-                    if response.status_code == 200:
-                        st.success("File uploaded successfully!")
-                        st.json(response.json())
-                    else:
-                        st.error(f"Upload failed. Status code: {response.status_code}")
-                        try:
+                    try:
+                        with st.spinner(f"Uploading `{data_file.name}`..."):
+                            response = requests.post(
+                                f"{api_base_url}/uploadfile/", files=files, timeout=7200
+                            )
+                        if response.status_code == 200:
+                            st.success("File processed successfully!")
                             st.json(response.json())
-                        except requests.exceptions.JSONDecodeError:
-                            st.text(response.text)
+                        else:
+                            st.error(
+                                f"Upload failed. Status code: {response.status_code}"
+                            )
+                            try:
+                                st.json(response.json())
+                            except requests.exceptions.JSONDecodeError:
+                                st.text(response.text)
+                    except requests.exceptions.RequestException as e:
+                        st.error(f"An error occurred during upload: {e}")
 
-                except requests.exceptions.RequestException as e:
-                    st.error(f"An error occurred during upload: {e}")
+    # --- Folder (ZIP) Upload Tab ---
+    with tab2:
+        st.markdown(
+            "Compress your folder into a `.zip` file, select it below, and fill in the metadata. The same metadata will be applied to **all files** within the folder."
+        )
+
+        zip_file = st.file_uploader(
+            "Select .zip File", type=["zip"], key="zip_file_uploader"
+        )
+
+        if zip_file is not None:
+            with st.form(key="folder_metadata_form"):
+                st.subheader(f"Metadata for all files in: `{zip_file.name}`")
+                research_project_id = st.text_input(
+                    "Research Project ID*",
+                    placeholder="e.g., BBBO",
+                    key="folder_proj",
+                )
+                author = st.text_input(
+                    "Author*", placeholder="e.g., wkm2109", key="folder_author"
+                )
+                experiment_type = st.text_input(
+                    "Experiment Type",
+                    placeholder="e.g., Frequency Sweep",
+                    key="folder_exp",
+                )
+                date_conducted = st.date_input("Date Conducted", key="folder_date")
+                custom_tags = st.text_input(
+                    "Custom Tags (comma-separated)",
+                    placeholder="e.g., tag1, important_data",
+                    key="folder_tags",
+                )
+                submit_button = st.form_submit_button(
+                    label="🚀 Upload Folder and Metadata"
+                )
+
+                if submit_button:
+                    if not research_project_id or not author:
+                        st.error("Please fill in all required fields (*).")
+                        return
+
+                    metadata_dict = {
+                        "research_project_id": research_project_id,
+                        "author": author,
+                        "experiment_type": experiment_type,
+                        "date_conducted": date_conducted.isoformat()
+                        if date_conducted
+                        else None,
+                        "custom_tags": custom_tags,
+                    }
+                    yaml_string = yaml.dump(metadata_dict, sort_keys=False)
+                    metadata_file_obj = StringIO(yaml_string)
+                    metadata_file_obj.name = "metadata.yaml"
+
+                    files = {
+                        "zip_file": (zip_file.name, zip_file, "application/zip"),
+                        "metadata_file": (
+                            metadata_file_obj.name,
+                            metadata_file_obj.getvalue(),
+                            "text/yaml",
+                        ),
+                    }
+
+                    try:
+                        with st.spinner(
+                            f"Uploading and processing `{zip_file.name}`... This may take a while."
+                        ):
+                            response = requests.post(
+                                f"{api_base_url}/upload_folder/",
+                                files=files,
+                                timeout=7200,  # 2 hours for very large folders
+                            )
+                        if response.status_code == 200:
+                            st.success("Folder processed successfully!")
+                            st.json(response.json())
+                        else:
+                            st.error(
+                                f"Upload failed. Status code: {response.status_code}"
+                            )
+                            try:
+                                st.json(response.json())
+                            except requests.exceptions.JSONDecodeError:
+                                st.text(response.text)
+                    except requests.exceptions.RequestException as e:
+                        st.error(f"An error occurred during upload: {e}")
 
 
 # --- UI Sections ---
